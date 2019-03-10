@@ -1,0 +1,188 @@
+apply plugin: 'com.android.application'
+
+android {
+  compileSdkVersion 28
+  defaultConfig {
+    applicationId "io.abdelraouf.learn.cucumber"
+    testApplicationId "io.abdelraouf.learn.cucumber.test"
+    minSdkVersion 15
+    targetSdkVersion 28
+    versionCode 1
+    versionName "1.0"
+    testInstrumentationRunner "cucumber.api.android.CucumberAndroidJUnitRunner"
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+  testOptions {
+    animationsDisabled true
+    unitTests {
+      includeAndroidResources = true
+      returnDefaultValues = true
+    }
+  }
+  buildTypes {
+    release {
+      minifyEnabled false
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+    }
+  }
+  sourceSets { main { assets.srcDirs = ['src/main/assets', 'src/androidTest/assets/'] } }
+}
+
+dependencies {
+  def cucumberVersion = "4.2.5"
+
+  implementation fileTree(dir: 'libs', include: ['*.jar'])
+  implementation 'androidx.appcompat:appcompat:1.1.0-alpha02'
+  implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
+  testImplementation 'junit:junit:4.12'
+
+  // Core library
+  androidTestImplementation 'androidx.test:core:1.1.0'
+
+  // AndroidJUnitRunner and JUnit Rules
+  androidTestImplementation 'androidx.test:runner:1.1.1'
+  androidTestImplementation 'androidx.test:rules:1.1.1'
+  androidTestUtil 'androidx.test:orchestrator:1.1.1'
+
+  // Assertions
+  androidTestImplementation 'androidx.test.ext:junit:1.1.0'
+  androidTestImplementation 'androidx.test.ext:truth:1.1.0'
+  androidTestImplementation 'com.google.truth:truth:0.42'
+
+  // Espresso dependencies
+  androidTestImplementation 'androidx.test.espresso:espresso-core:3.1.1'
+  androidTestImplementation 'androidx.test.espresso:espresso-contrib:3.1.1'
+  androidTestImplementation 'androidx.test.espresso:espresso-intents:3.1.1'
+  androidTestImplementation 'androidx.test.espresso:espresso-accessibility:3.1.1'
+  androidTestImplementation 'androidx.test.espresso:espresso-web:3.1.1'
+  androidTestImplementation 'androidx.test.espresso.idling:idling-concurrent:3.1.1'
+
+  androidTestImplementation 'androidx.test.espresso:espresso-idling-resource:3.1.1'
+
+  androidTestImplementation "io.cucumber:cucumber-junit:${cucumberVersion}"
+  androidTestImplementation "io.cucumber:cucumber-android:${cucumberVersion}"
+  androidTestImplementation "io.cucumber:cucumber-picocontainer:${cucumberVersion}"
+
+  implementation 'com.jakewharton:butterknife:10.1.0'
+  annotationProcessor 'com.jakewharton:butterknife-compiler:10.1.0'
+
+  implementation 'com.google.android.material:material:1.0.0'
+  implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
+}
+
+task runInstrumentationTests {
+  group "verification"
+  mustRunAfter "deleteExistingCucumberReports"
+  dependsOn "deleteExistingCucumberReports"
+  finalizedBy "downloadCucumberReports"
+}
+
+task downloadCucumberReports {
+  group "Verification"
+  description "Downloads the rich Cucumber report files (HTML, XML, JSON) from the connected device"
+
+  doLast {
+    def deviceSourcePath = getCucumberDevicePath()
+    def localReportPath = new File(buildDir, "reports/cucumber")
+    if (!localReportPath.exists()) {
+      localReportPath.mkdirs()
+    }
+    if (!localReportPath.exists()) {
+      throw new GradleException("Could not create $localReportPath")
+    }
+    def adb = getAdbPath()
+    def files = getCucumberReportFileNames()
+    files.each { fileName ->
+      exec {
+        commandLine adb, 'pull', "$deviceSourcePath/$fileName", localReportPath
+      }
+    }
+  }
+}
+
+/**
+ * Deletes existing Cucumber reports on the device.
+ */
+task deleteExistingCucumberReports {
+  group "Verification"
+  description "Removes the rich Cucumber report files (HTML, XML, JSON) from the connected device"
+  doLast {
+    def deviceSourcePath = getCucumberDevicePath()
+    def files = getCucumberReportFileNames()
+    files.each { fileName ->
+      def deviceFileName = deviceSourcePath + '/' + fileName
+      def output2 = executeAdb('if [ -d "' + deviceFileName + '" ]; then rm -r "' + deviceFileName + '"; else rm -r "' + deviceFileName + '" ; fi')
+      println output2
+    }
+  }
+}
+
+/**
+ * Sets the required permissions for Cucumber to write on the internal storage.
+ */
+task grantPermissions(dependsOn: 'installDebug') {
+  doLast {
+    def adb = getAdbPath()
+    // We only set the permissions for the main application
+    def mainPackageName = android.defaultConfig.applicationId
+    def readPermission = "android.permission.READ_EXTERNAL_STORAGE"
+    def writePermission = "android.permission.WRITE_EXTERNAL_STORAGE"
+    exec { commandLine adb, 'shell', 'pm', 'grant', mainPackageName, readPermission }
+    exec { commandLine adb, 'shell', 'pm', 'grant', mainPackageName, writePermission }
+  }
+}
+
+
+// ==================================================================
+// Utility methods
+// ==================================================================
+
+/**
+ * Utility method to get the full ADB path
+ * @return the absolute ADB path
+ */
+String getAdbPath() {
+  def adb = android.getAdbExecutable().toString()
+  if (adb.isEmpty()) {
+    throw new GradleException("Could not detect adb path")
+  }
+  return adb
+}
+
+/**
+ * Sometime adb returns '\r' character multiple times.
+ * @param s the original string returned by adb
+ * @return the fixed string without '\r'
+ */
+static def fixAdbOutput(String s) {
+  return s.replaceAll("[\r\n]+", "\n").trim()
+}
+
+/**
+ * Runs the adb tool
+ * @param program the program which is executed on the connected device
+ * @return the output of the adb tool
+ */
+def executeAdb(String program) {
+  def process = new ProcessBuilder(getAdbPath(), "shell", program).redirectErrorStream(true).start()
+  String text = new BufferedReader(new InputStreamReader(process.inputStream)).text
+  return fixAdbOutput(text)
+}
+
+/**
+ * The path which is used to store the Cucumber files.
+ * @return
+ */
+def getCucumberDevicePath() {
+  return 'sdcard/Android/data/cucumber.cukeulator/files/reports'
+}
+
+/**
+ * @return the known Cucumber report files/directories
+ */
+static def getCucumberReportFileNames() {
+  return ['cucumber.json', 'cucumber.xml', 'cucumber.html']
+}
